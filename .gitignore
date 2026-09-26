@@ -8,5 +8,8 @@ venv/
 # 日志与本地工具输出
 *.log
 
+# 运行时生成的索引产物（上传文档后可重建）
+backend/data/
+
 # WorkBuddy 工作区数据（非项目源码）
 .workbuddy/
