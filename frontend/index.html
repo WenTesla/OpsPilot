@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpsPilot — 智能运维助手</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-soft: #f7f7f8;
+    --bg-sidebar: #f9f9f9;
+    --border: #e5e5e5;
+    --text: #1f2328;
+    --text-soft: #6b7280;
+    --primary: #10a37f;
+    --primary-soft: #e6f6f1;
+    --danger: #e5484d;
+    --code-bg: #f4f4f5;
+    --pre-bg: #1e1e2e;
+    --pre-text: #e6e6e6;
+    --user-bubble: #f0f4f8;
+    --shadow: 0 2px 12px rgba(0,0,0,.08);
+  }
+  html[data-theme="dark"] {
+    --bg: #1c1c1e;
+    --bg-soft: #242426;
+    --bg-sidebar: #18181a;
+    --border: #333336;
+    --text: #e8e8ea;
+    --text-soft: #9a9aa0;
+    --primary: #19c39c;
+    --primary-soft: #143a31;
+    --danger: #ff6369;
+    --code-bg: #2c2c2f;
+    --pre-bg: #141416;
+    --pre-text: #e6e6e6;
+    --user-bubble: #2c3138;
+    --shadow: 0 2px 12px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); overflow: hidden;
+  }
+  .app { display: flex; height: 100vh; }
+
+  /* ============ 侧栏 ============ */
+  .sidebar {
+    width: 272px; background: var(--bg-sidebar); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0; transition: margin .25s;
+  }
+  .sidebar.collapsed { margin-left: -272px; }
+  .sidebar-header { padding: 14px 14px 8px; display: flex; align-items: center; gap: 8px; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--primary); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+  .logo-text { font-weight: 700; font-size: 15px; }
+  .btn-newchat {
+    margin: 8px 14px 4px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); color: var(--text); cursor: pointer; font-size: 14px; text-align: left;
+    display: flex; align-items: center; gap: 8px; transition: background .15s;
+  }
+  .btn-newchat:hover { background: var(--primary-soft); border-color: var(--primary); }
+  .sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 10px 20px; }
+  .section-title { font-size: 12px; color: var(--text-soft); padding: 10px 6px 6px; display: flex; justify-content: space-between; align-items: center; }
+  .conversations { list-style: none; }
+  .conversations li {
+    display: flex; align-items: center; padding: 9px 10px; border-radius: 9px; cursor: pointer;
+    font-size: 13.5px; color: var(--text); margin-bottom: 2px; white-space: nowrap; overflow: hidden;
+  }
+  .conversations li:hover { background: var(--bg-soft); }
+  .conversations li.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+  .conversations li span.title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .conversations li .del { visibility: hidden; border: none; background: none; color: var(--text-soft);
+    cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 5px; flex-shrink: 0; }
+  .conversations li:hover .del { visibility: visible; }
+  .conversations li .del:hover { color: var(--danger); background: var(--bg); }
+  /* 知识库 */
+  .kb-item {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px;
+    font-size: 13px; margin-bottom: 2px;
+  }
+  .kb-item:hover { background: var(--bg-soft); }
+  .kb-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kb-item .del { border: none; background: none; color: var(--text-soft); cursor: pointer; padding: 2px; border-radius: 5px; }
+  .kb-item .del:hover { color: var(--danger); }
+  .file-icon { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center;
+    justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+  .file-icon.pdf { background: #fde8e8; color: #c0392b; }
+  .file-icon.md  { background: #e8f0fe; color: #1a73e8; }
+  html[data-theme="dark"] .file-icon.pdf { background: #3a2422; }
+  html[data-theme="dark"] .file-icon.md  { background: #1f2a3d; }
+  .badge { font-size: 10.5px; padding: 1.5px 7px; border-radius: 999px; flex-shrink: 0; }
+  .badge.ready { background: var(--primary-soft); color: var(--primary); }
+  .badge.processing { background: #fff7e0; color: #b8860b; }
+  html[data-theme="dark"] .badge.processing { background: #3a3320; }
+  .badge.failed { background: #fde8e8; color: var(--danger); }
+  html[data-theme="dark"] .badge.failed { background: #3a2422; }
+  .sidebar-footer { padding: 10px 14px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .mode-chip { font-size: 11px; color: var(--text-soft); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; }
+  .icon-btn { border: none; background: none; color: var(--text-soft); cursor: pointer; font-size: 15px;
+    padding: 6px; border-radius: 8px; }
+  .icon-btn:hover { background: var(--bg-soft); color: var(--text); }
+
+  /* ============ 主区 ============ */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+  .topbar { padding: 12px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+  .topbar .title { font-weight: 600; font-size: 14.5px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-scroll { flex: 1; overflow-y: auto; }
+  .chat-inner { max-width: 780px; margin: 0 auto; padding: 28px 20px 130px; }
+  .msg { display: flex; gap: 12px; margin-bottom: 26px; animation: fadeUp .25s ease; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .avatar.bot { background: var(--primary); color: #fff; }
+  .avatar.user { background: var(--user-bubble); color: var(--text-soft); border: 1px solid var(--border); }
+  .msg-body { flex: 1; min-width: 0; }
+  .msg.user .msg-body { display: flex; justify-content: flex-end; }
+  .user-bubble { background: var(--user-bubble); padding: 10px 16px; border-radius: 14px; max-width: 85%;
+    white-space: pre-wrap; word-break: break-word; font-size: 14.5px; line-height: 1.65; }
+  .bot-content { font-size: 14.8px; line-height: 1.75; word-break: break-word; }
+  .bot-content p { margin: 0 0 12px; }
+  .bot-content p:last-child { margin-bottom: 0; }
+  .bot-content h1,.bot-content h2,.bot-content h3,.bot-content h4 { margin: 18px 0 10px; line-height: 1.4; }
+  .bot-content h1 { font-size: 19px; } .bot-content h2 { font-size: 17.5px; }
+  .bot-content h3 { font-size: 16px; }  .bot-content h4 { font-size: 15px; }
+  .bot-content ul,.bot-content ol { margin: 0 0 12px; padding-left: 24px; }
+  .bot-content li { margin-bottom: 5px; }
+  .bot-content blockquote { border-left: 3px solid var(--primary); padding: 4px 14px; margin: 0 0 12px;
+    color: var(--text-soft); background: var(--bg-soft); border-radius: 0 8px 8px 0; }
+  .bot-content code { background: var(--code-bg); padding: 2px 6px; border-radius: 5px; font-size: 13px;
+    font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  .bot-content pre { background: var(--pre-bg); color: var(--pre-text); border-radius: 12px;
+    padding: 14px 16px; overflow-x: auto; margin: 0 0 12px; position: relative; }
+  .bot-content pre code { background: none; padding: 0; color: inherit; font-size: 13px; line-height: 1.6; display: block; }
+  .bot-content table { border-collapse: collapse; margin: 0 0 12px; width: 100%; font-size: 13.5px; }
+  .bot-content th,.bot-content td { border: 1px solid var(--border); padding: 7px 12px; text-align: left; }
+  .bot-content th { background: var(--bg-soft); }
+  .bot-content a { color: var(--primary); }
+  .bot-content hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+  sup.cite { background: var(--primary-soft); color: var(--primary); border-radius: 5px; cursor: pointer;
+    font-size: 10.5px; padding: 1px 5px; margin: 0 2px; font-weight: 600; vertical-align: super; }
+  .citations { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 12.5px; color: var(--text-soft); }
+  .citations .cite-row { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+  .citations .n { color: var(--primary); font-weight: 700; }
+  .copy-btn { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,.12); color: #bbb;
+    border: none; border-radius: 6px; font-size: 11px; padding: 4px 9px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+  .bot-content pre:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover { color: #fff; background: rgba(255,255,255,.22); }
+  .typing-cursor { display: inline-block; width: 8px; height: 17px; background: var(--primary);
+    vertical-align: text-bottom; margin-left: 2px; animation: blink 1s infinite; border-radius: 2px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .msg-actions { margin-top: 10px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
+  .msg:hover .msg-actions { opacity: 1; }
+  .msg-actions button { border: none; background: none; color: var(--text-soft); font-size: 12.5px;
+    cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+  .msg-actions button:hover { background: var(--bg-soft); color: var(--text); }
+
+  /* 欢迎页 */
+  .welcome { text-align: center; padding-top: 12vh; }
+  .welcome .big-logo { width: 60px; height: 60px; border-radius: 18px; background: var(--primary);
+    color: #fff; font-size: 28px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; }
+  .welcome h1 { font-size: 23px; margin-bottom: 8px; }
+  .welcome p { color: var(--text-soft); font-size: 14px; margin-bottom: 30px; }
+  .suggestions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 620px; margin: 0 auto; }
+  .suggestion { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; cursor: pointer;
+    text-align: left; background: var(--bg); transition: all .15s; }
+  .suggestion:hover { border-color: var(--primary); background: var(--primary-soft); }
+  .suggestion .t { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+  .suggestion .d { font-size: 12px; color: var(--text-soft); }
+
+  /* ============ 输入区 ============ */
+  .input-area { position: absolute; bottom: 0; left: 0; right: 0; padding: 0 20px 18px;
+    background: linear-gradient(transparent, var(--bg) 30%); }
+  .input-box { max-width: 780px; margin: 0 auto; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 16px; box-shadow: var(--shadow); padding: 12px 14px 8px; }
+  .input-box:focus-within { border-color: var(--primary); }
+  .attach-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .attach-chip { display: flex; align-items: center; gap: 6px; background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px 10px; font-size: 12px; }
+  .attach-chip .x { cursor: pointer; color: var(--text-soft); }
+  .attach-chip .x:hover { color: var(--danger); }
+  textarea { width: 100%; border: none; outline: none; resize: none; background: none;
+    color: var(--text); font-size: 14.8px; line-height: 1.55; max-height: 180px; font-family: inherit; }
+  .input-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+  .input-actions .left { display: flex; gap: 4px; }
+  .hint { font-size: 11.5px; color: var(--text-soft); }
+  .btn-send, .btn-stop { border: none; width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all .15s; }
+  .btn-send { background: var(--primary); color: #fff; }
+  .btn-send:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-send:not(:disabled):hover { filter: brightness(1.1); }
+  .btn-stop { background: var(--danger); color: #fff; }
+  .btn-upload { border: none; background: none; font-size: 17px; color: var(--text-soft); cursor: pointer;
+    padding: 6px 8px; border-radius: 8px; }
+  .btn-upload:hover { background: var(--bg-soft); color: var(--text); }
+
+  /* Toast */
+  .toast-wrap { position: fixed; top: 18px; right: 18px; z-index: 999; display: flex; flex-direction: column; gap: 8px; }
+  .toast { background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+    font-size: 13px; box-shadow: var(--shadow); animation: fadeUp .25s; max-width: 320px; word-break: break-all; }
+  .toast.error { background: var(--danger); color: #fff; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-soft); }
+  @media (max-width: 720px) {
+    .sidebar { position: fixed; z-index: 100; height: 100%; }
+    .suggestions { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ 侧栏 ============ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">O</div>
+      <div class="logo-text">OpsPilot</div>
+    </div>
+    <button class="btn-newchat" id="btnNewChat">＋ 新的对话</button>
+    <div class="sidebar-scroll">
+      <div class="section-title">对话</div>
+      <ul class="conversations" id="convList"></ul>
+      <div class="section-title">知识库 <span id="kbCount" style="font-weight:400"></span></div>
+      <div id="kbList"></div>
+    </div>
+    <div class="sidebar-footer">
+      <span class="mode-chip" id="modeChip">Demo·Mock</span>
+      <div>
+        <button class="icon-btn" id="btnTheme" title="切换主题">🌙</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <main class="main">
+    <div class="topbar">
+      <button class="icon-btn" id="btnToggleSidebar" title="收起/展开侧栏">☰</button>
+      <div class="title" id="topTitle">新的对话</div>
+      <button class="icon-btn" id="btnClear" title="清空当前对话">🗑</button>
+    </div>
+    <div class="chat-scroll" id="chatScroll">
+      <div class="chat-inner" id="chatInner"></div>
+    </div>
+    <div class="input-area">
+      <div class="input-box">
+        <div class="attach-bar" id="attachBar"></div>
+        <textarea id="input" rows="1" placeholder="描述故障现象或提问…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <div class="input-actions">
+          <div class="left">
+            <button class="btn-upload" id="btnUpload" title="上传 PDF / Markdown 到知识库">📎</button>
+            <input type="file" id="fileInput" accept=".pdf,.md,.markdown" multiple hidden>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="hint">仅支持 PDF / MD</span>
+            <button class="btn-send" id="btnSend" title="发送">➤</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+"use strict";
+/* =========================================================
+ * 配置：API_BASE 为空 → Mock 演示模式（可独立离线运行）
+ * 接真实后端时改为如 "http://localhost:8000"
+ * 依赖接口（见 docs/RAG模块设计文档.md 附录A）：
+ *   POST   /api/documents        上传 PDF/MD
+ *   GET    /api/documents        知识库列表
+ *   DELETE /api/documents/{id}   删除文档
+ *   POST   /api/chat             SSE 流式对话
+ * ========================================================= */
+const API_BASE = "";   // 空 = 同源（后端同时托管前端）；跨域部署时改为 "http://localhost:8000"
+
+// 以 file:// 直接双击打开 → Mock 演示模式；由后端托管（http://）→ 走真实接口
+const MOCK = location.protocol === "file:" && API_BASE === "";
+
+/* ---------- 全局状态 ---------- */
+let state = {
+  convs: [],            // [{id,title,messages:[{role,content,citations}]}]
+  currentId: null,
+  docs: [],             // [{id,name,format,doc_type,status}]
+  generating: false,
+  mockAbort: false,
+};
+const LS = { convs: "opsrag.convs", docs: "opsrag.docs", theme: "opsrag.theme" };
+const $ = (s) => document.querySelector(s);
+
+/* ---------- 持久化 ---------- */
+function save() {
+  localStorage.setItem(LS.convs, JSON.stringify(state.convs));
+  localStorage.setItem(LS.docs, JSON.stringify(state.docs));
+}
+function load() {
+  try {
+    state.convs = JSON.parse(localStorage.getItem(LS.convs) || "[]");
+    state.docs  = JSON.parse(localStorage.getItem(LS.docs) || "[]");
+  } catch (e) { /* 忽略损坏数据 */ }
+  const theme = localStorage.getItem(LS.theme) || "light";
+  document.documentElement.dataset.theme = theme;
+  $("#btnTheme").textContent = theme === "dark" ? "☀️" : "🌙";
+  $("#modeChip").textContent = MOCK ? "Demo·Mock" : "已连接后端";
+}
+
+/* ---------- 工具 ---------- */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+function toast(msg, isError) {
+  const el = document.createElement("div");
+  el.className = "toast" + (isError ? " error" : "");
+  el.textContent = msg;
+  $("#toastWrap").appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/* =========================================================
+ * 轻量 Markdown 渲染（无外部依赖）
+ * 支持：标题/粗斜体/行内码/代码块/列表/引用/链接/表格/分割线
+ * ========================================================= */
+function mdToHtml(md) {
+  const lines = escapeHtml(md.replace(/\r\n/g, "\n")).split("\n");
+  let html = "", i = 0, inCode = false, codeBuf = [], codeLang = "";
+
+  const inline = (t) => t
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  while (i < lines.length) {
+    const line = lines[i];
+    // --- 代码块 ---
+    if (/^```/.test(line.trim())) {
+      if (!inCode) { inCode = true; codeLang = line.trim().slice(3).trim(); codeBuf = []; i++; continue; }
+      inCode = false;
+      html += `<pre><button class="copy-btn" onclick="copyCode(this)">复制</button><code>${codeBuf.join("\n")}</code></pre>`;
+      i++; continue;
+    }
+    if (inCode) { codeBuf.push(line); i++; continue; }
+    // --- 空行 ---
+    if (!line.trim()) { i++; continue; }
+    // --- 标题 ---
+    const h = line.match(/^(#{1,4})\s+(.*)/);
+    if (h) { const n = h[1].length; html += `<h${n}>${inline(h[2])}</h${n}>`; i++; continue; }
+    // --- 分割线 ---
+    if (/^(-{3,}|\*{3,})$/.test(line.trim())) { html += "<hr>"; i++; continue; }
+    // --- 引用 ---
+    if (/^&gt;\s?/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^&gt;\s?/.test(lines[i])) { buf.push(lines[i].replace(/^&gt;\s?/, "")); i++; }
+      html += `<blockquote>${inline(buf.join(" "))}</blockquote>`; continue;
+    }
+    // --- 表格 ---
+    if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|/.test(lines[i + 1])) {
+      const head = line.split("|").map(c => c.trim()).filter((c, idx, arr) => !(idx === 0 && c === "") && !(idx === arr.length - 1 && c === ""));
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) {
+        rows.push(lines[i].split("|").map(c => c.trim()).filter((c, idx, arr) => !(idx === 0 && c === "") && !(idx === arr.length - 1 && c === "")));
+        i++;
+      }
+      html += "<table><thead><tr>" + head.map(c => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>"
+            + rows.map(r => "<tr>" + r.map(c => `<td>${inline(c)}</td>`).join("") + "</tr>").join("") + "</tbody></table>";
+      continue;
+    }
+    // --- 无序列表 ---
+    if (/^\s*[-*]\s+/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { buf.push(lines[i].replace(/^\s*[-*]\s+/, "")); i++; }
+      html += "<ul>" + buf.map(b => `<li>${inline(b)}</li>`).join("") + "</ul>"; continue;
+    }
+    // --- 有序列表 ---
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { buf.push(lines[i].replace(/^\s*\d+\.\s+/, "")); i++; }
+      html += "<ol>" + buf.map(b => `<li>${inline(b)}</li>`).join("") + "</ol>"; continue;
+    }
+    // --- 普通段落（合并连续行）---
+    const buf = [line];
+    i++;
+    while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|[-*]\s|\d+\.\s|&gt;)/.test(lines[i])) { buf.push(lines[i]); i++; }
+    html += `<p>${inline(buf.join("\n")).replace(/\n/g, "<br>")}</p>`;
+  }
+  if (inCode) html += `<pre><code>${codeBuf.join("\n")}</code></pre>`;
+  // 引用角标 [1] → 上标
+  html = html.replace(/\[(\d{1,2})\]/g, '<sup class="cite" title="来源 $1">$1</sup>');
+  return html;
+}
+function copyCode(btn) {
+  const code = btn.parentElement.querySelector("code").innerText;
+  navigator.clipboard.writeText(code).then(() => { btn.textContent = "已复制"; setTimeout(() => btn.textContent = "复制", 1500); });
+}
+
+/* =========================================================
+ * Mock：模拟流式回答（演示用）
+ * ========================================================= */
+const MOCK_ANSWERS = [
+  { kw: ["cpu", "使用率", "负载"], reply:
+`根据知识库检索结果，**CPU 使用率过高**的标准处置流程如下 [1]：
+
+### 1. 快速定位
+- 确认告警范围：单实例还是多实例（多实例 → 优先怀疑上游流量/依赖）
+- 登录实例执行 \`top -c\` 按 CPU 排序，定位进程
+
+\`\`\`bash
+# 找出 CPU Top10 进程及其线程
+top -H -b -n 1 | head -20
+ps -eLf | awk '{print $1,$NF}' | sort | uniq -c | sort -rn | head
+\`\`\`
+
+### 2. 常见根因（按概率排序）
+| 根因 | 特征 | 处置 |
+|---|---|---|
+| 业务流量突增 | QPS 同步上涨 | 扩容 / 限流 |
+| 死循环或正则回溯 | 单进程 100% | 摘流量 + dump 线程栈 |
+| GC 频繁 | JVM 进程 CPU 高 | 查看 GC 日志调参 |
+
+### 3. 处置建议
+1. 先摘流量止损（若已影响 SLO）
+2. 保留现场：线程栈、GC 日志、监控截图
+3. 按上表对因处置，恢复后观察 30 分钟 [2]
+
+> 参考：《SOP-主机资源异常处理》第 3.2 节`,
+    citations: [
+      { n: 1, source: "SOP-主机资源异常处理.pdf", locator: "第 3.2 节" },
+      { n: 2, source: "2026-08-订单服务CPU告警复盘.md", locator: "改进项" },
+    ] },
+  { kw: ["mysql", "主从", "延迟", "数据库"], reply:
+`关于 **MySQL 主从延迟**，检索到 SOP 与历史复盘 [1]：
+
+### 排查步骤
+1. \`SHOW SLAVE STATUS\\G\` 查看 \`Seconds_Behind_Master\`
+2. 判断延迟方向：
+   - **IO 线程延迟** → 网络或主库写入压力
+   - **SQL 线程延迟** → 大事务 / 从库单线程回放
+
+\`\`\`sql
+-- 查看当前回放位点与大事务
+SELECT * FROM information_schema.processlist WHERE command = 'Execute';
+\`\`\`
+
+### 高频根因
+- 大事务（批量 update/delete）→ 拆小批量 [2]
+- 从库机器规格低 → 与主库对齐
+- 表无主键 → 全表扫描式回放
+
+详见知识库《MySQL 故障处理手册》第 4 章。`,
+    citations: [
+      { n: 1, source: "MySQL故障处理手册.pdf", locator: "第 4 章" },
+      { n: 2, source: "2026-06-核心库延迟复盘.md", locator: "根因" },
+    ] },
+  { kw: ["磁盘", "空间", "df"], reply:
+`**磁盘空间不足**处置要点 [1]：
+
+\`\`\`bash
+df -h                      # 确认哪个挂载点满
+du -xh --max-depth=2 /data | sort -rh | head -20
+\`\`\`
+
+常见可清理项（按安全等级）：
+- ✅ 日志文件（\`*.log.*\` 轮转残留）
+- ✅ 临时目录 \`/tmp\`、core dump
+- ⚠️ 需确认：Docker 镜像缓存、旧版本包
+- ❌ 禁止：未备份的业务数据
+
+清理后若仍快速增长，用 \`lsof | grep deleted\` 检查已删除但未释放的句柄 [2]。`,
+    citations: [
+      { n: 1, source: "SOP-主机资源异常处理.pdf", locator: "第 5 节" },
+      { n: 2, source: "Linux运维手册.md", locator: "磁盘管理" },
+    ] },
+];
+function mockReply(q) {
+  const lower = q.toLowerCase();
+  const hit = MOCK_ANSWERS.find(m => m.kw.some(k => lower.includes(k)));
+  if (hit) return { text: hit.reply, citations: hit.citations };
+  return { text:
+`（当前为 **Mock 演示模式**，未连接真实后端与知识库）
+
+我已收到你的问题：「${q.slice(0, 60)}${q.length > 60 ? "…" : ""}」。
+
+接入真实后端后，我会：
+1. 调用 \`search_ops_knowledge\` 检索知识库（上传的 PDF/MD 文档）
+2. 结合监控指标工具做根因分析
+3. 给出带 **来源引用** [1] 的处置建议
+
+**如何体验完整功能：**
+- 点击输入框左侧 📎 上传 PDF / Markdown 文件到知识库（左侧栏可见）
+- 试试问我「CPU 使用率超过 90% 怎么办」「MySQL 主从延迟排查」`,
+    citations: [{ n: 1, source: "（演示占位）", locator: "—" }] };
+}
+async function mockStream(text, onChunk) {
+  state.mockAbort = false;
+  const tokens = text.match(/[\u4e00-\u9fa5]|\w+|\s+|[^\s\w]/g) || [text];
+  for (const t of tokens) {
+    if (state.mockAbort) return false;
+    onChunk(t);
+    await new Promise(r => setTimeout(r, 12 + Math.random() * 25));
+  }
+  return !state.mockAbort;
+}
+
+/* =========================================================
+ * 渲染
+ * ========================================================= */
+function currentConv() { return state.convs.find(c => c.id === state.currentId); }
+
+function renderSidebar() {
+  // 对话列表
+  const ul = $("#convList");
+  ul.innerHTML = "";
+  state.convs.forEach(c => {
+    const li = document.createElement("li");
+    if (c.id === state.currentId) li.className = "active";
+    li.innerHTML = `<span class="title">💬 ${escapeHtml(c.title)}</span><button class="del" title="删除">✕</button>`;
+    li.onclick = () => { state.currentId = c.id; renderAll(); };
+    li.querySelector(".del").onclick = (e) => {
+      e.stopPropagation();
+      state.convs = state.convs.filter(x => x.id !== c.id);
+      if (state.currentId === c.id) state.currentId = state.convs[0]?.id || null;
+      save(); renderAll();
+    };
+    ul.appendChild(li);
+  });
+  // 知识库
+  const kb = $("#kbList");
+  kb.innerHTML = state.docs.length ? "" : '<div style="font-size:12px;color:var(--text-soft);padding:4px 8px">暂无文档，点击 📎 上传 PDF / MD</div>';
+  state.docs.forEach(d => {
+    const el = document.createElement("div");
+    el.className = "kb-item";
+    const st = d.status === "ready" ? "✅ 已入库" : d.status === "processing" ? "⏳ 解析中" : "❌ 失败";
+    el.innerHTML = `<div class="file-icon ${d.format}">${d.format.toUpperCase()}</div>
+      <span class="name" title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</span>
+      <span class="badge ${d.status}">${st}</span>
+      <button class="del" title="从知识库删除">✕</button>`;
+    el.querySelector(".del").onclick = async () => {
+      if (API_BASE) { try { await fetch(`${API_BASE}/api/documents/${d.id}`, { method: "DELETE" }); } catch (e) { toast("删除请求失败", true); return; } }
+      state.docs = state.docs.filter(x => x.id !== d.id);
+      save(); renderSidebar();
+      toast(`已删除 ${d.name}`);
+    };
+    kb.appendChild(el);
+  });
+  $("#kbCount").textContent = state.docs.length ? `(${state.docs.length})` : "";
+}
+
+function renderCitations(msg) {
+  if (!msg.citations || !msg.citations.length) return "";
+  return `<div class="citations"><div style="font-weight:600;margin-bottom:5px">📖 参考来源</div>` +
+    msg.citations.map(c =>
+      `<div class="cite-row"><span class="n">[${c.n}]</span><span>${escapeHtml(c.source)} · ${escapeHtml(c.locator || "")}</span></div>`
+    ).join("") + "</div>";
+}
+
+function renderMessages() {
+  const inner = $("#chatInner");
+  inner.innerHTML = "";
+  const conv = currentConv();
+  if (!conv || !conv.messages.length) { renderWelcome(inner); return; }
+  conv.messages.forEach(m => inner.appendChild(buildMsgEl(m)));
+  scrollBottom(true);
+}
+
+function buildMsgEl(m) {
+  const div = document.createElement("div");
+  div.className = "msg " + (m.role === "user" ? "user" : "bot");
+  if (m.role === "user") {
+    div.innerHTML = `<div class="avatar user">我</div><div class="msg-body"><div class="user-bubble">${escapeHtml(m.content)}</div></div>`;
+  } else {
+    div.innerHTML = `<div class="avatar bot">O</div><div class="msg-body">
+      <div class="bot-content">${mdToHtml(m.content)}</div>${renderCitations(m)}
+      <div class="msg-actions"><button onclick="copyMsg(this)">📋 复制</button></div>
+    </div>`;
+  }
+  return div;
+}
+
+function renderWelcome(inner) {
+  inner.innerHTML = `<div class="welcome">
+    <div class="big-logo">O</div>
+    <h1>OpsPilot 智能运维助手</h1>
+    <p>基于 LangGraph · 检索你上传的 PDF / Markdown 运维知识，给出带引用的处置建议</p>
+    <div class="suggestions">
+      <div class="suggestion" data-q="order-service 的 CPU 使用率超过 90%，怎么排查？"><div class="t">🔥 CPU 告警排查</div><div class="d">SOP 步骤 + 常见根因</div></div>
+      <div class="suggestion" data-q="MySQL 主从延迟 20 分钟，怎么定位根因？"><div class="t">🗄 数据库主从延迟</div><div class="d">排查命令 + 高频根因</div></div>
+      <div class="suggestion" data-q="磁盘空间不足 85% 告警，哪些可以安全清理？"><div class="t">💾 磁盘空间治理</div><div class="d">安全清理清单</div></div>
+      <div class="suggestion" data-q="上传的 SOP 文档里怎么写告警升级流程？"><div class="t">📋 查询知识库</div><div class="d">检索已上传文档</div></div>
+    </div></div>`;
+  inner.querySelectorAll(".suggestion").forEach(s => s.onclick = () => { $("#input").value = s.dataset.q; send(); });
+}
+
+function renderAll() {
+  renderSidebar(); renderMessages();
+  const conv = currentConv();
+  $("#topTitle").textContent = conv ? conv.title : "新的对话";
+}
+
+function scrollBottom(instant) {
+  const sc = $("#chatScroll");
+  sc.scrollTo({ top: sc.scrollHeight, behavior: instant ? "auto" : "smooth" });
+}
+
+/* =========================================================
+ * 发送与流式接收
+ * ========================================================= */
+async function send() {
+  if (state.generating) return;
+  const input = $("#input");
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = ""; autoGrow();
+
+  let conv = currentConv();
+  if (!conv) { conv = { id: uid(), title: q.slice(0, 22), messages: [] }; state.convs.unshift(conv); state.currentId = conv.id; }
+  conv.messages.push({ role: "user", content: q });
+  save(); renderAll();
+
+  // 构造流式输出目标
+  const msgEl = document.createElement("div");
+  msgEl.className = "msg bot";
+  msgEl.innerHTML = `<div class="avatar bot">O</div><div class="msg-body">
+    <div class="bot-content"><span class="typing-cursor"></span></div></div>`;
+  $("#chatInner").appendChild(msgEl);
+  scrollBottom();
+  const contentEl = msgEl.querySelector(".bot-content");
+
+  setGenerating(true);
+  let full = "", ok = true;
+  const append = (t) => {
+    full += t;
+    contentEl.innerHTML = mdToHtml(full) + '<span class="typing-cursor"></span>';
+    const sc = $("#chatScroll");
+    if (sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120) scrollBottom(true);
+  };
+
+  try {
+    if (MOCK) {
+      // ---- Mock 模式 ----
+      const { text, citations } = mockReply(q);
+      ok = await mockStream(text, append);
+      if (ok) finishMsg(conv, msgEl, full, citations);
+      else finishMsg(conv, msgEl, full + "\n\n*(已中断)*", []);
+    } else {
+      // ---- 真实后端 SSE ----
+      const ctrl = new AbortController();
+      window.__abortCtrl = ctrl;
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: conv.id, messages: conv.messages }),
+        signal: ctrl.signal,
+      });
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "", citations = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n"); buf = parts.pop();
+        for (const part of parts) {
+          const line = part.replace(/^data:\s*/, "");
+          if (line === "[DONE]") continue;
+          try {
+            const j = JSON.parse(line);
+            if (j.type === "token") append(j.content);
+            if (j.type === "citations") citations = j.items;
+          } catch (e) { /* 跳过非 JSON 帧 */ }
+        }
+      }
+      finishMsg(conv, msgEl, full, citations);
+    }
+  } catch (e) {
+    if (e.name === "AbortError") finishMsg(conv, msgEl, full + "\n\n*(已中断)*", []);
+    else { toast("后端请求失败：" + e.message, true); finishMsg(conv, msgEl, full || "（请求失败）", []); }
+  } finally {
+    setGenerating(false);
+    save(); renderSidebar();
+  }
+}
+
+function finishMsg(conv, msgEl, text, citations) {
+  conv.messages.push({ role: "assistant", content: text, citations: citations || [] });
+  msgEl.querySelector(".msg-body").innerHTML =
+    `<div class="bot-content">${mdToHtml(text)}</div>${renderCitations({ citations: citations || [] })}
+     <div class="msg-actions"><button onclick="copyMsg(this)">📋 复制</button></div>`;
+  scrollBottom();
+}
+
+function setGenerating(on) {
+  state.generating = on;
+  const btn = $("#btnSend");
+  if (on) { btn.className = "btn-stop"; btn.textContent = "■"; btn.title = "停止生成"; }
+  else    { btn.className = "btn-send"; btn.textContent = "➤"; btn.title = "发送"; }
+}
+
+function stopGenerating() {
+  state.mockAbort = true;
+  if (window.__abortCtrl) window.__abortCtrl.abort();
+}
+
+function copyMsg(btn) {
+  const body = btn.closest(".msg-body").querySelector(".bot-content").innerText;
+  navigator.clipboard.writeText(body).then(() => { btn.textContent = "✅ 已复制"; setTimeout(() => btn.textContent = "📋 复制", 1500); });
+}
+
+/* =========================================================
+ * 文件上传（仅 PDF / MD）
+ * ========================================================= */
+async function handleFiles(files) {
+  for (const f of files) {
+    const ext = f.name.split(".").pop().toLowerCase();
+    if (!["pdf", "md", "markdown"].includes(ext)) {
+      toast(`不支持的格式：${f.name}（仅 PDF / MD）`, true);
+      continue;
+    }
+    if (f.size > 50 * 1024 * 1024) { toast(`文件超过 50MB：${f.name}`, true); continue; }
+    const doc = { id: uid(), name: f.name, format: ext === "pdf" ? "pdf" : "md", doc_type: "other", status: "processing" };
+    state.docs.unshift(doc); save(); renderSidebar();
+    toast(`已上传 ${f.name}，正在解析入库…`);
+
+    if (MOCK) {
+      // Mock：1.5 秒后变为 ready
+      setTimeout(() => { doc.status = "ready"; save(); renderSidebar(); toast(`《${f.name}》已完成解析，可被检索`); }, 1500);
+    } else {
+      try {
+        const fd = new FormData();
+        fd.append("file", f);
+        const res = await fetch(`${API_BASE}/api/documents`, { method: "POST", body: fd });
+        const j = await res.json();
+        doc.status = j.status === "ready" ? "ready" : j.status || "processing";
+        // 轮询状态
+        if (doc.status === "processing") {
+          const timer = setInterval(async () => {
+            try {
+              const r = await fetch(`${API_BASE}/api/documents/${j.doc_id}`);
+              const d = await r.json();
+              if (d.status !== "processing") { doc.status = d.status; clearInterval(timer); save(); renderSidebar(); }
+            } catch (e) { clearInterval(timer); }
+          }, 3000);
+        }
+        save(); renderSidebar();
+      } catch (e) { doc.status = "failed"; save(); renderSidebar(); toast(`上传失败：${f.name}`, true); }
+    }
+  }
+}
+
+/* =========================================================
+ * 事件绑定 & 启动
+ * ========================================================= */
+function autoGrow() {
+  const t = $("#input");
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight, 180) + "px";
+}
+$("#input").addEventListener("input", autoGrow);
+$("#input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$("#btnSend").onclick = () => { state.generating ? stopGenerating() : send(); };
+$("#btnNewChat").onclick = () => {
+  state.currentId = null; renderAll();
+  $("#input").focus();
+};
+$("#btnClear").onclick = () => {
+  const conv = currentConv();
+  if (!conv) return;
+  conv.messages = []; save(); renderAll();
+};
+$("#btnToggleSidebar").onclick = () => $("#sidebar").classList.toggle("collapsed");
+$("#btnTheme").onclick = () => {
+  const cur = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = cur;
+  localStorage.setItem(LS.theme, cur);
+  $("#btnTheme").textContent = cur === "dark" ? "☀️" : "🌙";
+};
+$("#btnUpload").onclick = () => $("#fileInput").click();
+$("#fileInput").addEventListener("change", (e) => { handleFiles([...e.target.files]); e.target.value = ""; });
+// 拖拽上传到整页
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length) handleFiles([...e.dataTransfer.files]);
+});
+
+load();
+renderAll();
+</script>
+</body>
+</html>

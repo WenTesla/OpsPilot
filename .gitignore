@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 日志与本地工具输出
+*.log
+
+# WorkBuddy 工作区数据（非项目源码）
+.workbuddy/

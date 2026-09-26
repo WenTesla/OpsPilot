@@ -1,0 +1,13 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+pydantic>=2.6
+numpy>=1.26
+pypdf>=4.0
+langgraph>=0.2
+langchain-core>=0.3
+httpx>=0.26
+
+# 可选（配置后提升效果，不配也能跑）
+# langchain-openai>=0.2      # 接 OpenAI 兼容大模型
+# sentence-transformers>=2.6 # BGE-M3 本地向量 / reranker
