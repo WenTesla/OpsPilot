@@ -39,8 +39,47 @@ app.add_middleware(
 )
 
 pipeline = RAGPipeline()
-agent = OpsPilot(pipeline)
 MODEL = get_chat_model()
+
+
+def _rebuild_index_if_needed() -> None:
+    """切换 EMBED_BACKEND 后旧向量维度不匹配会失效（见 store.load 的校验），这里用
+    `files/` 下的原文件自动重建，避免「界面上文档都在，检索却永远返回空」。
+
+    典型触发场景：hash(384 维) 切到 BGE-M3(1024 维)，或反之。
+    """
+    docs = doc_store.list_docs()
+    if not docs:
+        return
+    indexed = {r["doc_id"] for r in pipeline.store.records}
+    missing = [d for d in docs if d.get("status") == "ready" and d["doc_id"] not in indexed]
+    if not missing:
+        return
+
+    print(f"[rag] {len(missing)} 份文档缺少向量索引，开始重建…", flush=True)
+    for d in missing:
+        src = Path(d.get("path") or "")
+        if not src.is_file():
+            doc_store.update_doc(d["doc_id"], status="failed", error="索引已失效且原文件缺失，请重新上传")
+            print(f"[rag] × {d['filename']}：原文件缺失（{src}）", flush=True)
+            continue
+        try:
+            t0 = time.time()
+            n = pipeline.ingest_file(
+                str(src), d["filename"], d.get("format", "md"), d["doc_id"],
+                doc_type=d.get("doc_type", "other"),
+                service=d.get("service") or [], env=d.get("env") or [],
+            )
+            doc_store.update_doc(d["doc_id"], status="ready", chunk_count=n,
+                                 cost_ms=int((time.time() - t0) * 1000))
+            print(f"[rag] ✓ {d['filename']}：{n} chunks", flush=True)
+        except Exception as e:
+            doc_store.update_doc(d["doc_id"], status="failed", error=str(e)[:300])
+            print(f"[rag] × {d['filename']}：{e}", flush=True)
+
+
+_rebuild_index_if_needed()
+agent = OpsPilot(pipeline)
 
 
 # ============================ 健康检查 ============================
@@ -222,4 +261,4 @@ if config.FRONTEND_DIR.exists():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("app.main:app", host=config.HOST, port=config.PORT, reload=False)

@@ -12,10 +12,25 @@ from __future__ import annotations
 
 import hashlib
 import re
+from pathlib import Path
 
 import numpy as np
 
 from .. import config
+
+
+def _resolve_model_path(name: str) -> str:
+    """EMBED_MODEL 既可以是 HuggingFace repo id，也可以是本地目录。
+
+    本地目录支持绝对路径，或相对 backend/ 的路径（如 `models/bge-m3`）——
+    走本地目录可以绕开 HF cache 在 Windows 上建符号链接失败、产出 0 字节文件的问题。
+    """
+    p = Path(name)
+    if p.is_dir():
+        return str(p)
+    if not p.is_absolute() and (config.BASE_DIR / p).is_dir():
+        return str(config.BASE_DIR / p)
+    return name            # 当 repo id 处理，由 sentence-transformers 去下载
 
 
 class Embedder:
@@ -30,8 +45,11 @@ class Embedder:
         if self.backend in ("auto", "local"):
             try:
                 from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(config.EMBED_MODEL)
-                self.dim = self._model.get_sentence_embedding_dimension()
+                self._model = SentenceTransformer(_resolve_model_path(config.EMBED_MODEL))
+                # sentence-transformers ≥5 把 get_sentence_embedding_dimension 改名了，两者都兼容
+                get_dim = getattr(self._model, "get_embedding_dimension", None) \
+                    or self._model.get_sentence_embedding_dimension
+                self.dim = get_dim()
                 self.backend = "local"
                 return
             except Exception:

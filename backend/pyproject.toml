@@ -1,0 +1,28 @@
+[project]
+name = "opspilot-backend"
+version = "0.1.0"
+description = "OpsPilot 智能运维 Agent 后端：FastAPI + LangGraph + RAG"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.6",
+    "numpy>=1.26",
+    "pypdf>=4.0",
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "httpx>=0.26",
+    "python-dotenv>=1.0",
+    "sentence-transformers>=2.6",
+]
+
+[dependency-groups]
+dev = [
+    "langchain-openai>=0.2",
+]
+
+[tool.uv]
+# 锁文件解析时放宽下限，尽量贴近已验证可跑的版本组合
+resolution = "highest"

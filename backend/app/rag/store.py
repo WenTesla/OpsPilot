@@ -76,8 +76,12 @@ class ChunkStore:
             fused = _rrf([dense_rank, sparse_rank], k=config.RRF_K)
             ranked = [i for i, _ in fused][: config.CANDIDATE_K]
 
-            scores = self._rescore(query, ranked, fused)
-            order = sorted(range(len(ranked)), key=lambda j: scores[j], reverse=True)
+            scores, covers = self._rescore(query, ranked, fused)
+            # 相关性门槛：过滤与问题几乎无关的候选，避免「凑够 Top-K」污染上下文
+            keep = [j for j in range(len(ranked)) if covers[j] >= config.MIN_COVER]
+            if not keep:
+                return []
+            order = sorted(keep, key=lambda j: scores[j], reverse=True)
 
             # 多样性：同文档最多 2 个 chunk，且去掉重复文本
             hits: list[Hit] = []
@@ -118,17 +122,18 @@ class ChunkStore:
         return [i for i, r in enumerate(self.records) if ok(r)]
 
     def _dense_rank(self, query: str, cand: list[int]) -> list[int]:
-        if self.backend_is_hash():
-            # 哈希向量语义弱，降低其权重：这里仍召回，交给融合与 rerank 处理
-            pass
+        """稠密向量召回。
+
+        注意 EMBED_BACKEND=hash 这一档：它不是语义向量，而是「词频哈希向量」，且和
+        BM25 共用同一个 tokenize —— 双路候选高度同源（实测 Jaccard 重合度 0.577），
+        该路单独 Recall@5 仅 0.833，低于 BM25 单路的 1.000，引入它反而稀释排序。
+        hash 模式下主要靠下游的 IDF 覆盖率重排 + MIN_COVER 门槛来纠正，见 _rescore。
+        """
         qv = self.embedder.embed([query])[0]
         mat = self.vecs[cand]
         sims = mat @ qv
         order = np.argsort(-sims)
         return [cand[i] for i in order if sims[i] > 0.05][: config.CANDIDATE_K]
-
-    def backend_is_hash(self) -> bool:
-        return getattr(self.embedder, "backend", "hash") == "hash"
 
     def _bm25_rank(self, query: str, cand: list[int]) -> list[int]:
         q = set(tokenize(query))
@@ -170,8 +175,12 @@ class ChunkStore:
                 df[t] = df.get(t, 0) + 1
         self._bm25 = {"df": df, "len": lens, "avg": (sum(lens) / len(lens)) if lens else 0.0, "n": len(lens)}
 
-    def _rescore(self, query: str, ranked: list[int], fused: list[tuple[int, float]]) -> list[float]:
-        """重排：配置了 CrossEncoder 用模型，否则用『融合分 + 字面覆盖率』兜底。"""
+    def _rescore(self, query: str, ranked: list[int], fused: list[tuple[int, float]]) -> tuple[list[float], list[float]]:
+        """重排：配置了 CrossEncoder 用模型，否则用『融合分 + 字面覆盖率』兜底。
+
+        返回 (scores, covers)。covers 为 IDF 加权查询覆盖率，用于相关性门槛过滤；
+        使用 CrossEncoder 时覆盖率无意义，统一返回 1.0（即不做该过滤）。
+        """
         fuse_map = dict(fused)
         base = [fuse_map.get(i, 0.0) for i in ranked]
         if config.USE_RERANK:
@@ -180,7 +189,7 @@ class ChunkStore:
                 model = CrossEncoder(config.RERANK_MODEL)
                 pairs = [[query, self.records[i]["text"]] for i in ranked]
                 scores = model.predict(pairs)
-                return [float(s) for s in scores]
+                return [float(s) for s in scores], [1.0] * len(ranked)
             except Exception:
                 pass
         # 兜底重排：融合分 + IDF 加权的查询覆盖率（避免"使用""定位"这类高频词乱入）
@@ -191,12 +200,13 @@ class ChunkStore:
 
         q = set(tokenize(query))
         q_norm = sum(idf(t) for t in q) or 1.0
-        out = []
+        out, covers = [], []
         for j, i in enumerate(ranked):
             toks = set(self._token_cache(i))
             cover = sum(idf(t) for t in (q & toks)) / q_norm
+            covers.append(cover)
             out.append(base[j] * 5.0 + cover * 1.0)
-        return out
+        return out, covers
 
     # ---------------- 持久化 ----------------
     def save(self) -> None:
@@ -214,10 +224,15 @@ class ChunkStore:
             with open(config.CHUNKS_JSONL, "r", encoding="utf-8") as f:
                 self.records = [json.loads(line) for line in f if line.strip()]
             self.vecs = np.load(config.VECTORS_NPY)
-            if self.vecs.shape[0] != len(self.records):
+            # 条目数或向量维度对不上，说明索引来自另一个 EMBED_BACKEND（如 hash=384 vs bge=1024），
+            # 或者 data 目录被外部删过一部分 —— 直接判为失效重建，否则后续 add/delete/检索都会炸。
+            if (
+                self.vecs.ndim != 2
+                or self.vecs.shape[0] != len(self.records)
+                or self.vecs.shape[1] != self.dim
+            ):
                 self.records, self.vecs = [], np.zeros((0, self.dim), dtype="float32")
                 return
-            self.dim = self.vecs.shape[1]
             self._rebuild_bm25()
         except Exception:
             self.records, self.vecs = [], np.zeros((0, self.dim), dtype="float32")

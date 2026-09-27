@@ -1,0 +1,72 @@
+{
+  "_comment": "RAG 检索层评测集。query=提问，expect_file=应当命中的文档，expect_head=应当命中的章节（可省略）。命中判定：Top-K 中至少有一条来自 expect_file，且（若给了 expect_head）其 heading_path 包含该章节。",
+  "top_k": 5,
+  "cases": [
+    {
+      "query": "CPU 使用率飙到 90%，怎么快速定位是哪个进程",
+      "expect_file": "SOP-主机资源异常处理.md",
+      "expect_head": "1.1 快速定位"
+    },
+    {
+      "query": "磁盘快满了，有哪些东西可以安全删除",
+      "expect_file": "SOP-主机资源异常处理.md",
+      "expect_head": "3.2 可安全清理"
+    },
+    {
+      "query": "内存使用率高，第一步要看什么",
+      "expect_file": "SOP-主机资源异常处理.md",
+      "expect_head": "2.1 快速定位"
+    },
+    {
+      "query": "磁盘空间清理有哪些禁止操作",
+      "expect_file": "SOP-主机资源异常处理.md",
+      "expect_head": "3.3 禁止操作"
+    },
+    {
+      "query": "MySQL 主从延迟怎么判断是卡在 IO 线程还是 SQL 线程",
+      "expect_file": "SOP-MySQL主从延迟处理.md",
+      "expect_head": "3.2 判断卡在哪个环节"
+    },
+    {
+      "query": "主从延迟达到多少需要升级处理",
+      "expect_file": "SOP-MySQL主从延迟处理.md",
+      "expect_head": "1. 告警定义"
+    },
+    {
+      "query": "复制报错了能不能直接跳过错误继续跑",
+      "expect_file": "SOP-MySQL主从延迟处理.md",
+      "expect_head": "5. 禁止操作"
+    },
+    {
+      "query": "网关大量返回 502 一般是什么原因",
+      "expect_file": "SOP-接口5xx错误排查.md",
+      "expect_head": "1. 先分清是哪一种 5xx"
+    },
+    {
+      "query": "接口错误率超过多少要上报值班经理",
+      "expect_file": "SOP-接口5xx错误排查.md",
+      "expect_head": "7. 升级条件"
+    },
+    {
+      "query": "上次订单服务超时的直接原因是什么",
+      "expect_file": "复盘-订单服务大面积超时.md",
+      "expect_head": "3.1 直接原因"
+    },
+    {
+      "query": "订单服务故障之后有哪些改进项还没做完",
+      "expect_file": "复盘-订单服务大面积超时.md",
+      "expect_head": "4. 改进项"
+    },
+    {
+      "query": "这次故障为什么在测试环境没被发现",
+      "expect_file": "复盘-订单服务大面积超时.md",
+      "expect_head": "3.2 为什么没在测试环境发现"
+    }
+  ],
+  "abstain": [
+    {
+      "_comment": "拒答测试：知识库里没有的内容，应当检索为空、不硬编答案",
+      "query": "公司年会在哪个酒店举办，报销标准是多少"
+    }
+  ]
+}

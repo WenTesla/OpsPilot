@@ -5,11 +5,22 @@ __pycache__/
 .venv/
 venv/
 
+# 环境变量与密钥（模板 .env.example 需要提交，故单独放行）
+.env
+*.env
+!.env.example
+
 # 日志与本地工具输出
 *.log
 
 # 运行时生成的索引产物（上传文档后可重建）
 backend/data/
 
+# 本地下载的 embedding / reranker 模型权重（2.2G，由 HF 缓存或运行时下载）
+backend/models/
+
 # WorkBuddy 工作区数据（非项目源码）
 .workbuddy/
+
+# 编辑器本地配置
+.vscode/
