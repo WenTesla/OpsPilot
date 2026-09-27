@@ -36,7 +36,7 @@ LLM_MODEL=deepseek-reasoner uv run python -m uvicorn app.main:app
 | `OPENAI_BASE_URL` | 空 | OpenAI 兼容端点（如 DeepSeek/通义/本地 vLLM） |
 | `LLM_MODEL` | `gpt-4o-mini` | 模型名 |
 | `LLM_TEMPERATURE` | `0.2` | 排障场景建议保持低温 |
-| `EMBED_BACKEND` | `auto` | `auto`/`local`(BGE-M3)/`openai`/`hash`。**用 DeepSeek 必须显式设 `hash`**，它没有 `/embeddings` 接口 |
+| `EMBED_BACKEND` | `auto` | `auto`/`local`(BGE-M3)/`openai`。**用 DeepSeek 必须显式设 `local`**，它没有 `/embeddings` 接口 |
 | `EMBED_MODEL` | `BAAI/bge-m3` | `EMBED_BACKEND=local` 时使用的句向量模型 |
 | `RAG_RERANK` | `0` | 设为 `1` 且装了 sentence-transformers 时启用 CrossEncoder 重排 |
 | `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 重排模型 |
@@ -57,7 +57,7 @@ LLM_MODEL=deepseek-reasoner uv run python -m uvicorn app.main:app
 | §4 切分 | ✅ MD 按标题层级、PDF 按页，chunk 携带章节路径/页码 | `app/rag/parse.py` |
 | §5.1 检索流程 | ✅ 稠密 + BM25 + RRF 融合 + 重排 + 上下文组装 | `app/rag/store.py`、`pipeline.py` |
 | §5.3 混合检索 | ✅（BM25 为内置实现，非 ES） | `store.py::_bm25_rank` |
-| §5.4 元数据过滤 | ✅ service / env / doc_type / doc_id | `store.py::_filter_idx` |
+| §5.4 元数据过滤 | ❌ 已移除（LLM 推断实体做硬过滤会导致零召回） | — |
 | §5.5 Rerank | ⚠️ 默认用「融合分 + IDF 加权覆盖率」兜底；配 `RAG_RERANK=1` 走 CrossEncoder | `store.py::_rescore` |
 | §6 LangGraph 集成 | ✅ StateGraph + ToolNode，RAG 作为 Tool | `app/agent/graph.py` |
 | §7 评估 | ❌ 未实现（M3） | — |
@@ -72,7 +72,7 @@ backend/
     main.py              FastAPI 路由 + SSE + 静态托管
     rag/
       parse.py           PDF/MD 解析 + 结构感知切分
-      embed.py           Embedding 适配器（BGE-M3 / OpenAI / 本地哈希兜底）
+      embed.py           Embedding 适配器（BGE-M3 / OpenAI，无可用后端直接报错）
       store.py           向量检索 + BM25 + RRF + 重排 + 磁盘持久化
       pipeline.py        入库/检索/上下文组装，引用收集（ContextVar）
     agent/
@@ -110,7 +110,7 @@ uv run python eval_rag.py       # RAG 效果评测（检索质量 / 引用溯源
 
 1. **向量库是本地 numpy + JSON**，未接 Milvus/ES；数据量上万 chunk 后需替换（接口已隔离，替换 `ChunkStore` 即可）
 2. **未配 API Key 时用 Mock 模型**，只做检索结果摘要式汇总，不会做真正的推理；配 Key 后即自动切换
-3. **Embedding 默认降级为本地哈希向量**（非语义），主要靠 BM25 兜底；装 `sentence-transformers` 后自动用 BGE-M3，效果显著提升
+3. **Embedding 只有语义后端**（BGE-M3 / OpenAI）：本机已装 `sentence-transformers` + `models/bge-m3` 本地权重，`EMBED_BACKEND=auto` 会优先走它。两者都不可用时**服务直接报错退出**，不再静默降级到非语义的哈希向量（它与 BM25 同源、不互补，只会让检索质量变得不可预期）
 4. 无权限体系、无异步任务队列（上传解析为同步执行，大 PDF 会阻塞请求）
 5. 评估体系（RAGAS / 评测集）尚未实现 —— 现用自研的 `eval_rag.py`（见上方「验证」）
-6. **分词过朴素导致相关性门槛区分度差**：`tokenize` 是「英文按词 + 中文单字/二字组」，实测相关查询的覆盖率最低 0.145、无关查询最高 0.144，几乎贴在一起。`RAG_MIN_COVER` 只能做粗过滤，真正的拒答靠 LLM 兜底。换 jieba 分词或接入 BGE-M3 语义向量后才能有效拉开差距
+6. **分词过朴素导致相关性门槛区分度差**：`tokenize` 是「英文按词 + 中文单字/二字组」，实测相关查询的覆盖率最低 0.145、无关查询最高 0.144，几乎贴在一起。`RAG_MIN_COVER` 只能做粗过滤，真正的拒答仍靠 LLM 兜底（BGE-M3 语义向量已默认接入，提升主要来自向量路召回，不在这个门槛上）。换 jieba 分词可进一步拉开差距

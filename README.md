@@ -45,13 +45,13 @@ LLM_MODEL=deepseek-reasoner uv run python -m uvicorn app.main:app
 | 变量 | 说明 |
 |---|---|
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL` | 大模型。留空则用内置 Mock 模型，全链路照样能跑 |
-| `EMBED_BACKEND` | `hash`（零依赖，BM25 兜底）/ `local`（BGE-M3 语义向量）/ `openai` |
+| `EMBED_BACKEND` | `local`（BGE-M3 语义向量，默认）/ `openai`。两者都不可用时服务直接报错退出 |
 | `RAG_MIN_COVER` | 最低相关性门槛，低于此值返回空而非硬塞上下文 |
 | `RAG_TOP_K` / `RAG_CANDIDATE_K` | 返回条数 / 每路候选数 |
 | `HOST` / `PORT` | 监听地址 |
 | `OPSPILOT_DATA_DIR` | 索引目录，默认 `backend/data` |
 
-> **⚠️ DeepSeek 必读**：DeepSeek **不提供 `/embeddings` 接口**。而 `EMBED_BACKEND=auto` 时一旦检测到 `OPENAI_API_KEY` 就会去调 `/embeddings` 并直接 404。所以用 DeepSeek 时 `.env` 里要把 `EMBED_BACKEND` 写成 `hash`（靠 BM25 走关键词召回）或 `local`（本地 BGE-M3，不走 DeepSeek）。想要语义召回，`local` 最省事。
+> **⚠️ DeepSeek 必读**：DeepSeek **不提供 `/embeddings` 接口**。而 `EMBED_BACKEND=auto` 时一旦检测到 `OPENAI_API_KEY` 就会去调 `/embeddings` 并直接 404。所以用 DeepSeek 时 `.env` 里要把 `EMBED_BACKEND` 显式写成 `local`（本地 BGE-M3，与 LLM 用的厂商无关）。
 
 > **⚠️ `local`（BGE-M3）模式**：模型约 2.2GB，已下载到 `backend/models/bge-m3`，`EMBED_MODEL` 直接指向该本地目录，**加载不再走 HuggingFace cache**。若需要在别的机器重新下载：
 > ```bash
@@ -61,7 +61,7 @@ LLM_MODEL=deepseek-reasoner uv run python -m uvicorn app.main:app
 > 两个变量都不能少：`HF_ENDPOINT` 绕开直连 502，`HF_HUB_DISABLE_XET=1` 绕开镜像站不支持 xet 分块传输导致的 CAS 401。
 > CPU 上加载约 13s、单次检索 250~500ms、入库约 4~5s/份，可接受。
 
-> **切换 EMBED_BACKEND 后无需手动重传**：hash 是 384 维、BGE-M3 是 1024 维，维度不符的旧向量会被引擎判为失效，服务启动时自动用 `data/files/` 下的原文件重建索引（日志里有 `[rag] ✓ xxx：N chunks`）。
+> **切换 EMBED_BACKEND 后无需手动重传**：BGE-M3 是 1024 维、OpenAI `text-embedding-3-small` 是 1536 维，维度不符的旧向量会被引擎判为失效，服务启动时自动用 `data/files/` 下的原文件重建索引（日志里有 `[rag] ✓ xxx：N chunks`）。
 
 **密钥安全**：`backend/.env` 已在 `.gitignore` 中忽略，只有模板 `.env.example` 入库。想彻底跳过 `.env` 加载：`OPSPILOT_SKIP_DOTENV=1`。
 

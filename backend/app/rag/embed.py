@@ -1,16 +1,14 @@
-"""Embedding 适配器（三级降级，保证任何环境都能跑起来）。
+"""Embedding 适配器（只用语义向量，两级选择）。
 
 优先级（EMBED_BACKEND=auto）：
-  1. local  : sentence-transformers 加载 BGE-M3（效果最好，需下载模型）
-  2. openai : OpenAI 兼容 /embeddings 接口（需 OPENAI_API_KEY）
-  3. hash   : 纯本地哈希向量（无需任何依赖/网络，配合 BM25 使用）
+  1. local  : sentence-transformers 加载 BGE-M3（默认，需本地权重或可访问 HF）
+  2. openai : OpenAI 兼容 /embeddings 接口（需 OPENAI_API_KEY，且该厂商支持）
 
-说明：hash 向量不是语义向量，只表达字面相似；此模式下检索主要靠 BM25 兜底，
-      语义召回会弱一些。接入 local/openai 后端后效果显著提升。
+两者都不可用时直接抛错，不再静默降级到「假向量」：
+非语义的哈希向量与 BM25 输入同源、无法互补，只会让检索质量变得不可预期。
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from pathlib import Path
 
@@ -36,12 +34,18 @@ def _resolve_model_path(name: str) -> str:
 class Embedder:
     def __init__(self, backend: str | None = None):
         self.backend = (backend or config.EMBED_BACKEND).lower()
-        self.dim = 384
+        self.dim = 0                       # 由 _init 按实际模型填实
         self._model = None
         self._init()
 
     # -------- 初始化 --------
     def _init(self) -> None:
+        """后端选择顺序（auto 时）：本地语义向量 → OpenAI Embeddings。
+
+        两者都不可用时直接抛错，不做静默降级——让「检索质量不可预期」在启动阶段
+        就暴露出来，而不是留到线上变成答非所问。
+        """
+        local_err: Exception | None = None
         if self.backend in ("auto", "local"):
             try:
                 from sentence_transformers import SentenceTransformer
@@ -52,22 +56,34 @@ class Embedder:
                 self.dim = get_dim()
                 self.backend = "local"
                 return
-            except Exception:
+            except Exception as e:
                 if self.backend == "local":
                     raise
+                local_err = e
         if self.backend in ("auto", "openai") and config.OPENAI_API_KEY:
             self.backend = "openai"
             self.dim = 1024
             return
-        self.backend = "hash"
-        self.dim = 384
+        if self.backend == "hash":
+            raise RuntimeError(
+                "EMBED_BACKEND=hash 已移除：哈希向量与 BM25 输入同源、与关键词路不互补，"
+                "只会让检索质量不可预期。请改用 local（BGE-M3）或 openai。"
+            )
+        raise RuntimeError(
+            "没有可用的 Embedding 后端。二选一：\n"
+            "  1) 本地语义向量：uv pip install sentence-transformers，并把 EMBED_MODEL 指向 BGE-M3 权重"
+            "（HF repo id 或本地目录，如 models/bge-m3；国内网络建议 HF_ENDPOINT=https://hf-mirror.com "
+            "且 HF_HUB_DISABLE_XET=1）；\n"
+            "  2) 在线接口：配 OPENAI_API_KEY（注意 DeepSeek 等厂商没有 /embeddings 接口）。\n"
+            f"当前 EMBED_BACKEND={self.backend}"
+            + (f"，local 失败原因：{local_err!r}" if local_err else "")
+        )
 
     @property
     def describe(self) -> str:
         return {
             "local": f"sentence-transformers:{config.EMBED_MODEL}",
             "openai": "openai-embeddings",
-            "hash": "local-hash(兜底，非语义)",
         }[self.backend]
 
     # -------- 向量化 --------
@@ -79,7 +95,7 @@ class Embedder:
             return np.asarray(v, dtype="float32")
         if self.backend == "openai":
             return self._embed_openai(texts)
-        return self._embed_hash(texts)
+        raise RuntimeError(f"未知的 Embedding 后端：{self.backend}")
 
     def _embed_openai(self, texts: list[str]) -> np.ndarray:
         import httpx
@@ -98,24 +114,12 @@ class Embedder:
         norm = np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
         return vecs / norm
 
-    def _embed_hash(self, texts: list[str]) -> np.ndarray:
-        """字符 bigram + 词 的哈希 TF 向量，L2 归一化。"""
-        out = np.zeros((len(texts), self.dim), dtype="float32")
-        for i, t in enumerate(texts):
-            toks = tokenize(t)
-            for tok in toks:
-                h = int(hashlib.md5(tok.encode("utf-8")).hexdigest()[:8], 16)
-                out[i, h % self.dim] += 1.0
-            n = np.linalg.norm(out[i]) + 1e-9
-            out[i] /= n
-        return out
-
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 
 
 def tokenize(text: str) -> list[str]:
-    """中英混合分词：英文按词，中文按字 + 二元组合（兼顾 BM25 与哈希向量）。"""
+    """中英混合分词：英文按词，中文按字 + 二元组合（BM25 专用）。"""
     text = text.lower()
     words = _TOKEN_RE.findall(text)
     toks: list[str] = []

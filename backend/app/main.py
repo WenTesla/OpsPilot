@@ -16,9 +16,10 @@ import hashlib
 import json
 import shutil
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,25 +29,48 @@ from pydantic import BaseModel
 from . import config
 from .agent.graph import OpsPilot
 from .agent.llm import MockChatModel, get_chat_model
+from .mcp.client import load_tools
+from .mcp.tools import CURRENT_TOOL_EVENTS
 from .rag.pipeline import CURRENT_CITATIONS, RAGPipeline
 from .storage import docs as doc_store
 
-app = FastAPI(title="OpsPilot API", version="0.1.0")
+pipeline = RAGPipeline()
+MODEL = get_chat_model()
+
+# MCP 工具在 lifespan 里初始化 —— 不能在模块层 await：
+# uvicorn --reload 时 app 的 import 发生在已运行的事件循环内部，
+# 模块层调用 asyncio.run() 会抛 "cannot be called from a running event loop"。
+MCP_TOOLS: list = []
+MCP_STATUS: dict = {"enabled": False, "servers": {}, "tools": 0, "reason": "初始化中"}
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """启动时挂载 MCP 活数据工具；失败则保持纯 RAG（等同 v0.1）。"""
+    global MCP_TOOLS, MCP_STATUS, agent
+    MCP_TOOLS, MCP_STATUS = await load_tools()
+    if MCP_STATUS["enabled"]:
+        print(f"[mcp] ✓ 已挂载 {MCP_STATUS['tools']} 个活数据工具："
+              f"{', '.join(t.name for t in MCP_TOOLS)}", flush=True)
+    else:
+        print(f"[mcp] × 活数据工具未启用（{MCP_STATUS.get('reason') or '未知原因'}），行为等同 v0.1", flush=True)
+    agent = OpsPilot(pipeline, extra_tools=MCP_TOOLS)
+    yield
+
+
+app = FastAPI(title="OpsPilot API", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
 
-pipeline = RAGPipeline()
-MODEL = get_chat_model()
-
 
 def _rebuild_index_if_needed() -> None:
     """切换 EMBED_BACKEND 后旧向量维度不匹配会失效（见 store.load 的校验），这里用
     `files/` 下的原文件自动重建，避免「界面上文档都在，检索却永远返回空」。
 
-    典型触发场景：hash(384 维) 切到 BGE-M3(1024 维)，或反之。
+    典型触发场景：BGE-M3(1024 维) 切到 OpenAI(1536 维)，或反之。
     """
     docs = doc_store.list_docs()
     if not docs:
@@ -67,8 +91,6 @@ def _rebuild_index_if_needed() -> None:
             t0 = time.time()
             n = pipeline.ingest_file(
                 str(src), d["filename"], d.get("format", "md"), d["doc_id"],
-                doc_type=d.get("doc_type", "other"),
-                service=d.get("service") or [], env=d.get("env") or [],
             )
             doc_store.update_doc(d["doc_id"], status="ready", chunk_count=n,
                                  cost_ms=int((time.time() - t0) * 1000))
@@ -79,6 +101,10 @@ def _rebuild_index_if_needed() -> None:
 
 
 _rebuild_index_if_needed()
+
+
+# 默认值（纯知识库），lifespan 启动后按需重建为「RAG + MCP 工具」版本。
+# 这样即便 lifespan 阶段出错，Agent 也不会是未定义的悬空引用。
 agent = OpsPilot(pipeline)
 
 
@@ -90,6 +116,7 @@ async def health():
         "model": "mock-ops-model" if isinstance(MODEL, MockChatModel) else config.LLM_MODEL,
         "rag": pipeline.stats(),
         "docs": len(doc_store.list_docs()),
+        "mcp": MCP_STATUS,
     }
 
 
@@ -97,9 +124,6 @@ async def health():
 @app.post("/api/documents", status_code=202)
 async def upload_document(
     file: UploadFile = File(...),
-    doc_type: str = Form("other"),
-    service: str = Form(""),
-    env: str = Form(""),
 ):
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in config.ALLOWED_EXT:
@@ -120,9 +144,6 @@ async def upload_document(
 
     doc = doc_store.add_doc({
         "doc_id": doc_id, "filename": file.filename, "format": fmt,
-        "doc_type": doc_type if doc_type in config.CHUNK_DOC_TYPES else "other",
-        "service": [s.strip() for s in service.split(",") if s.strip()],
-        "env": [s.strip() for s in env.split(",") if s.strip()],
         "status": "processing", "chunk_count": 0, "size": len(content),
         "path": str(saved),
     })
@@ -131,7 +152,6 @@ async def upload_document(
     try:
         n = pipeline.ingest_file(
             str(saved), file.filename, fmt, doc_id,
-            doc_type=doc["doc_type"], service=doc["service"], env=doc["env"],
         )
         doc_store.update_doc(doc_id, status="ready", chunk_count=n, cost_ms=int((time.time() - t0) * 1000))
     except Exception as e:
@@ -203,7 +223,10 @@ async def chat(req: ChatRequest):
 
     async def gen():
         box: list[dict] = []
+        tool_box: list[dict] = []
+        tool_sent = 0
         token = CURRENT_CITATIONS.set(box)
+        tool_token = CURRENT_TOOL_EVENTS.set(tool_box)
         streamed = ""
         try:
             yield _sse({"type": "status", "content": "正在分析…"})
@@ -219,8 +242,13 @@ async def chat(req: ChatRequest):
                                 yield _sse({"type": "token", "content": piece})
                                 await asyncio.sleep(0.012)
                 elif mode == "updates":
-                    if isinstance(payload, dict) and "tools" in payload:
-                        yield _sse({"type": "status", "content": "已检索知识库，正在生成结论…"})
+                    # 工具节点跑完后，把这一轮新增的工具事件推给前端
+                    has_new = len(tool_box) > tool_sent
+                    while tool_sent < len(tool_box):
+                        yield _sse(tool_box[tool_sent])
+                        tool_sent += 1
+                    if has_new and isinstance(payload, dict) and "tools" in payload:
+                        yield _sse({"type": "status", "content": "已完成工具调用，正在生成结论…"})
         except Exception as e:
             yield _sse({"type": "error", "content": f"生成失败：{e}"})
         finally:
@@ -243,11 +271,40 @@ async def chat(req: ChatRequest):
 
             citations = sorted(box, key=lambda c: c.get("n", 0))
             yield _sse({"type": "citations", "items": citations})
+            yield _sse({"type": "tools", "items": tool_box})
             yield _sse({"type": "done"})
             yield "data: [DONE]\n\n"
             CURRENT_CITATIONS.reset(token)
+            CURRENT_TOOL_EVENTS.reset(tool_token)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ============================ MCP 活数据工具 ============================
+@app.get("/api/mcp/status")
+async def mcp_status():
+    """当前 MCP 工具的挂载情况。"""
+    return {
+        **MCP_STATUS,
+        "tools": [{"name": t.name, "description": (t.description or "")[:120]} for t in MCP_TOOLS],
+    }
+
+
+@app.post("/api/mcp/reload")
+async def mcp_reload():
+    """MCP 服务比主服务晚起来时，用它免重启重连。"""
+    global MCP_TOOLS, MCP_STATUS, agent
+    from .mcp import client as mcp_client
+
+    tools, status = await mcp_client.reload_tools()
+    MCP_TOOLS, MCP_STATUS = tools, status
+    # 用新工具集重建 Agent（会话历史在 checkpointer 里，thread_id 不变故不影响）
+    agent = OpsPilot(pipeline, extra_tools=MCP_TOOLS)
+    if status["enabled"]:
+        print(f"[mcp] ✓ 重新挂载 {status['tools']} 个工具", flush=True)
+    else:
+        print(f"[mcp] × 重连失败：{status.get('reason')}", flush=True)
+    return {"ok": status["enabled"], "status": status}
 
 
 def _split(text: str, size: int = 6):

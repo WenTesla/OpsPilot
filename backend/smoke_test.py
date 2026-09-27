@@ -29,8 +29,7 @@ def main():
     md.write_text(SAMPLE, encoding="utf-8")
 
     p = RAGPipeline()
-    n = p.ingest_file(str(md), "SOP-主机资源异常处理.md", "md", "doc_sample",
-                      doc_type="sop", service=["order-service"], env=["prod"])
+    n = p.ingest_file(str(md), "SOP-主机资源异常处理.md", "md", "doc_sample")
     print(f"[1] 入库 chunk 数: {n}")
     print(f"[2] 索引状态: {p.stats()}")
 

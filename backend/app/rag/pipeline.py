@@ -2,7 +2,7 @@
 
 对外接口与文档第 3 / 5 节一致：
     ingest_file(...) -> chunk 数量
-    retrieve(query, filters, top_k) -> SearchResult
+    retrieve(query, top_k) -> SearchResult
     format_context(result) -> (给 LLM 的上下文文本, 给前端的 citations)
 """
 from __future__ import annotations
@@ -31,16 +31,12 @@ class RAGPipeline:
         filename: str,
         fmt: str,
         doc_id: str,
-        doc_type: str = "other",
-        service: list[str] | None = None,
-        env: list[str] | None = None,
     ) -> int:
         # 幂等：同 doc_id 重新入库前先清掉旧 chunk
         self.store.delete_by_doc(doc_id)
         blocks = parse_file(path, fmt)
         chunks: list[Chunk] = chunk_blocks(
-            blocks, doc_id=doc_id, filename=filename, doc_type=doc_type,
-            service=service or [], env=env or [],
+            blocks, doc_id=doc_id, filename=filename,
             target=config.CHUNK_TARGET_CHARS, overlap=config.CHUNK_OVERLAP_CHARS,
         )
         return self.store.add(chunks, [c.text for c in chunks])
@@ -49,9 +45,9 @@ class RAGPipeline:
         return self.store.delete_by_doc(doc_id)
 
     # ---------------- 检索 ----------------
-    def retrieve(self, query: str, filters: dict | None = None, top_k: int | None = None) -> SearchResult:
+    def retrieve(self, query: str, top_k: int | None = None) -> SearchResult:
         t0 = time.time()
-        hits = self.store.search(query, filters=filters or {}, top_k=top_k or config.TOP_K)
+        hits = self.store.search(query, top_k=top_k or config.TOP_K)
         return SearchResult(hits=hits, took_ms=int((time.time() - t0) * 1000))
 
     # ---------------- 上下文组装 ----------------

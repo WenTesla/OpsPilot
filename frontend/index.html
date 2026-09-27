@@ -163,6 +163,18 @@
   .citations { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 12.5px; color: var(--text-soft); }
   .citations .cite-row { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
   .citations .n { color: var(--primary); font-weight: 700; }
+  .tool-trace { margin: 0 0 12px; padding: 9px 11px; background: var(--bg-soft);
+    border: 1px dashed var(--border); border-radius: 9px; font-size: 12px; color: var(--text-soft); }
+  .tool-trace .hd { font-weight: 600; color: var(--text); margin-bottom: 5px; }
+  .tool-trace .ti { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; line-height: 1.5; }
+  .tool-trace .ti .ic { flex: 0 0 12px; text-align: center; }
+  .tool-trace .ti .ic.ok { color: var(--primary); }
+  .tool-trace .ti .ic.bad { color: var(--danger); }
+  .tool-trace .ti .nm { font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+    color: var(--text); font-weight: 600; }
+  .tool-trace .ti .ag { opacity: .75; }
+  .tool-trace .mock-tag { float: right; font-size: 11px; color: var(--text-soft);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
   .copy-btn { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,.12); color: #bbb;
     border: none; border-radius: 6px; font-size: 11px; padding: 4px 9px; cursor: pointer; opacity: 0; transition: opacity .15s; }
   .bot-content pre:hover .copy-btn { opacity: 1; }
@@ -306,7 +318,7 @@ const MOCK = location.protocol === "file:" && API_BASE === "";
 let state = {
   convs: [],            // [{id,title,messages:[{role,content,citations}]}]
   currentId: null,
-  docs: [],             // [{id,name,format,doc_type,status}]
+  docs: [],             // [{id,name,format,status}]
   generating: false,
   mockAbort: false,
   kbOpen: false,        // 知识库区块是否展开（默认折叠）
@@ -358,7 +370,6 @@ async function syncServerDocs() {
       id: d.doc_id,
       name: d.filename,
       format: d.format === "pdf" ? "pdf" : "md",
-      doc_type: d.doc_type,
       status: d.status,
       chunks: d.chunk_count,
       size: d.size,
@@ -647,6 +658,37 @@ function renderCitations(msg) {
     ).join("") + "</div>";
 }
 
+/* ---- 工具调用轨迹：把 Agent 调用了哪些数据源工具摊给用户看 ----
+ * 事件成对出现（tool_call → tool_result），这里按「同一工具最后一次 result」合并成一行。
+ */
+function renderToolTrace(items) {
+  if (!items || !items.length) return "";
+  const rows = [], idx = {};
+  for (const ev of items) {
+    let row = idx[ev.name];
+    if (ev.type === "tool_call") {
+      row = { name: ev.name, server: ev.server || "", args: ev.args || {}, ok: null, summary: "" };
+      rows.push(row); idx[ev.name] = row;
+    } else if (ev.type === "tool_result") {
+      row = row || { name: ev.name, server: ev.server || "", args: {}, ok: null, summary: "" };
+      if (!idx[ev.name]) rows.push(row);
+      row.ok = ev.ok; row.summary = ev.summary || "";
+      idx[ev.name] = row;
+    }
+  }
+  const mock = true; // v0.2 的数据源为 mock，提示用户别把演示值当真实监控
+  return `<div class="tool-trace"><div class="hd">🔧 已调用的活数据工具` +
+    (mock ? `<span class="mock-tag">示例数据</span>` : "") + `</div>` +
+    rows.map(r => {
+      const args = Object.entries(r.args || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+      const icon = r.ok === null ? "⋯" : (r.ok ? "✓" : "✗");
+      return `<div class="ti"><span class="ic ${r.ok === false ? "bad" : "ok"}">${icon}</span>` +
+        `<span class="nm">${escapeHtml(r.name)}</span>` +
+        (args ? `<span class="ag">(${escapeHtml(args)})</span>` : "") +
+        (r.summary ? `<span>· ${escapeHtml(r.summary)}</span>` : "") + `</div>`;
+    }).join("") + `</div>`;
+}
+
 function renderMessages() {
   const inner = $("#chatInner");
   inner.innerHTML = "";
@@ -663,6 +705,7 @@ function buildMsgEl(m) {
     div.innerHTML = `<div class="avatar user">我</div><div class="msg-body"><div class="user-bubble">${escapeHtml(m.content)}</div></div>`;
   } else {
     div.innerHTML = `<div class="avatar bot">O</div><div class="msg-body">
+      ${renderToolTrace(m.tools)}
       <div class="bot-content">${mdToHtml(m.content)}</div>${renderCitations(m)}
       <div class="msg-actions"><button onclick="copyMsg(this)">📋 复制</button></div>
     </div>`;
@@ -719,6 +762,7 @@ async function send() {
   const msgEl = document.createElement("div");
   msgEl.className = "msg bot";
   msgEl.innerHTML = `<div class="avatar bot">O</div><div class="msg-body">
+    <div class="tool-trace-slot"></div>
     <div class="bot-content"><span class="typing-cursor"></span></div></div>`;
   $("#chatInner").appendChild(msgEl);
   scrollBottom();
@@ -751,7 +795,13 @@ async function send() {
       });
       const reader = res.body.getReader();
       const dec = new TextDecoder();
-      let buf = "", citations = [];
+      let buf = "", citations = [], tools = [];
+      const toolSlot = msgEl.querySelector(".tool-trace-slot");
+      const flushTools = () => {
+        if (toolSlot) toolSlot.innerHTML = renderToolTrace(tools);
+        const sc = $("#chatScroll");
+        if (sc.scrollHeight - sc.scrollTop - sc.clientHeight < 160) scrollBottom(true);
+      };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -764,10 +814,12 @@ async function send() {
             const j = JSON.parse(line);
             if (j.type === "token") append(j.content);
             if (j.type === "citations") citations = j.items;
+            if (j.type === "tool_call" || j.type === "tool_result") { tools.push(j); flushTools(); }
+            if (j.type === "tools") { tools = j.items || tools; flushTools(); }
           } catch (e) { /* 跳过非 JSON 帧 */ }
         }
       }
-      finishMsg(conv, msgEl, full, citations);
+      finishMsg(conv, msgEl, full, citations, tools);
     }
   } catch (e) {
     if (e.name === "AbortError") finishMsg(conv, msgEl, full + "\n\n*(已中断)*", []);
@@ -778,10 +830,12 @@ async function send() {
   }
 }
 
-function finishMsg(conv, msgEl, text, citations) {
-  conv.messages.push({ role: "assistant", content: text, citations: citations || [] });
+function finishMsg(conv, msgEl, text, citations, tools) {
+  const cas = citations || [], tls = tools || [];
+  conv.messages.push({ role: "assistant", content: text, citations: cas, tools: tls });
   msgEl.querySelector(".msg-body").innerHTML =
-    `<div class="bot-content">${mdToHtml(text)}</div>${renderCitations({ citations: citations || [] })}
+    `${renderToolTrace(tls)}
+     <div class="bot-content">${mdToHtml(text)}</div>${renderCitations({ citations: cas })}
      <div class="msg-actions"><button onclick="copyMsg(this)">📋 复制</button></div>`;
   scrollBottom();
 }
@@ -814,7 +868,7 @@ async function handleFiles(files) {
       continue;
     }
     if (f.size > 50 * 1024 * 1024) { toast(`文件超过 50MB：${f.name}`, true); continue; }
-    const doc = { id: uid(), name: f.name, format: ext === "pdf" ? "pdf" : "md", doc_type: "other", status: "processing" };
+    const doc = { id: uid(), name: f.name, format: ext === "pdf" ? "pdf" : "md", status: "processing" };
     state.docs.unshift(doc); save(); renderSidebar();
     setKbOpen(true);          // 从欢迎页触发的上传，此时面板可能是折叠的
     toast(`已上传 ${f.name}，正在解析入库…`);

@@ -42,7 +42,7 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "") or None
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 
-EMBED_BACKEND = os.getenv("EMBED_BACKEND", "auto")      # auto|local|openai|hash
+EMBED_BACKEND = os.getenv("EMBED_BACKEND", "auto")      # auto|local|openai
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
 USE_RERANK = os.getenv("RAG_RERANK", "0") == "1"
 RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
@@ -61,7 +61,19 @@ CHUNK_OVERLAP_CHARS = int(os.getenv("CHUNK_OVERLAP_CHARS", "80"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
 ALLOWED_EXT = {".pdf", ".md", ".markdown"}
 
-CHUNK_DOC_TYPES = {"sop", "postmortem", "doc", "other"}
+# ---------- MCP 活数据工具（v0.2，可选）----------
+# MCP_ENABLED=auto 时：装了依赖且能连通才启用；=0 完全关闭；=1 强制尝试
+MCP_ENABLED = os.getenv("MCP_ENABLED", "auto")
+MCP_MONITOR_URL = os.getenv("MCP_MONITOR_URL", "http://127.0.0.1:8101/mcp")
+MCP_LOG_URL = os.getenv("MCP_LOG_URL", "http://127.0.0.1:8102/mcp")
+# transport: streamable_http（本地 MCP 服务）/ sse（多数云端托管端点）
+MCP_MONITOR_TRANSPORT = os.getenv("MCP_MONITOR_TRANSPORT", "streamable_http")
+MCP_LOG_TRANSPORT = os.getenv("MCP_LOG_TRANSPORT", "streamable_http")
+MCP_CONNECT_TIMEOUT_SEC = os.getenv("MCP_CONNECT_TIMEOUT_SEC", "3")       # 探测/握手超时
+MCP_TIMEOUT_SEC = os.getenv("MCP_TIMEOUT_SEC", "15")                      # 单次工具调用超时
+MCP_MAX_RETRIES = os.getenv("MCP_MAX_RETRIES", "2")
+MCP_MAX_RESULT_CHARS = os.getenv("MCP_MAX_RESULT_CHARS", "4000")          # 单次结果截断长度
+MCP_MAX_TOOL_DESC_CHARS = os.getenv("MCP_MAX_TOOL_DESC_CHARS", "400")     # 工具描述截断长度
 
 # ---------- 服务 ----------
 HOST = os.getenv("HOST", "127.0.0.1")

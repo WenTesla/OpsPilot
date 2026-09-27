@@ -28,7 +28,8 @@ from pathlib import Path
 # 必须在 import app.* 之前设置：config 在模块加载时读取环境变量
 _EVAL_DIR = Path(os.getenv("OPSPILOT_DATA_DIR") or tempfile.mkdtemp(prefix="opspilot_eval_"))
 os.environ["OPSPILOT_DATA_DIR"] = str(_EVAL_DIR)
-os.environ.setdefault("EMBED_BACKEND", "hash")
+# 不强制后端：跟随 .env（local=BGE-M3 / openai）。没有可用后端时 RAGPipeline 会直接报错，
+# 评测宁可失败也不要跑在“非语义假向量”上得出误导性指标。
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -99,8 +100,7 @@ def main() -> int:
     source_texts: dict[str, str] = {}
     print("\n=== 入库 examples/ ===")
     for f in sorted(EXAMPLES.glob("*.md")):
-        n = p.ingest_file(str(f), f.name, "md", f"eval_{f.stem}", doc_type="sop",
-                          service=["order-service"], env=["prod"])
+        n = p.ingest_file(str(f), f.name, "md", f"eval_{f.stem}")
         source_texts[f.name] = f.read_text(encoding="utf-8")
         print(f"  {f.name}: {n} chunks")
     print(f"  合计 {p.stats()['chunks']} chunks\n")
@@ -173,7 +173,7 @@ def main() -> int:
         print("\n=== 4. 生成层哨兵测试 ===")
         sentinel_path = _EVAL_DIR / "SOP-哨兵校验.md"
         sentinel_path.write_text(SENTINEL_DOC, encoding="utf-8")
-        p.ingest_file(str(sentinel_path), "SOP-哨兵校验.md", "md", "eval_sentinel", doc_type="sop")
+        p.ingest_file(str(sentinel_path), "SOP-哨兵校验.md", "md", "eval_sentinel")
 
         res = p.retrieve(SENTINEL_QUERY, top_k=top_k)
         ctx_contains = any(m in (h.text + h.heading_path) for h in res.hits for m in SENTINEL_MARKERS)

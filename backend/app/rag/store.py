@@ -25,7 +25,6 @@ class Hit:
     locator: str
     heading_path: str
     doc_id: str
-    doc_type: str
 
 
 class ChunkStore:
@@ -62,14 +61,12 @@ class ChunkStore:
             return removed
 
     # ---------------- 检索 ----------------
-    def search(self, query: str, filters: dict | None = None, top_k: int | None = None) -> list[Hit]:
+    def search(self, query: str, top_k: int | None = None) -> list[Hit]:
         top_k = top_k or config.TOP_K
         with self._lock:
             if not self.records:
                 return []
-            cand = self._filter_idx(filters or {})
-            if not cand:
-                return []
+            cand = list(range(len(self.records)))
 
             dense_rank = self._dense_rank(query, cand)
             sparse_rank = self._bm25_rank(query, cand)
@@ -100,34 +97,17 @@ class ChunkStore:
                     chunk_id=r["chunk_id"], text=r["text"], score=float(scores[j]),
                     filename=r.get("filename", ""), locator=r.get("locator", ""),
                     heading_path=r.get("heading_path", ""), doc_id=r["doc_id"],
-                    doc_type=r.get("doc_type", "other"),
                 ))
                 if len(hits) >= top_k:
                     break
             return hits
 
     # ---- 各路召回 ----
-    def _filter_idx(self, filters: dict) -> list[int]:
-        def ok(r) -> bool:
-            if filters.get("doc_type") and r.get("doc_type") != filters["doc_type"]:
-                return False
-            if filters.get("doc_id") and r.get("doc_id") != filters["doc_id"]:
-                return False
-            for key in ("service", "env"):
-                want = filters.get(key)
-                if want and not (set(r.get(key) or []) & set(want)):
-                    return False
-            return True
-
-        return [i for i, r in enumerate(self.records) if ok(r)]
-
     def _dense_rank(self, query: str, cand: list[int]) -> list[int]:
-        """稠密向量召回。
+        """稠密向量召回（BGE-M3 / OpenAI 语义向量）。
 
-        注意 EMBED_BACKEND=hash 这一档：它不是语义向量，而是「词频哈希向量」，且和
-        BM25 共用同一个 tokenize —— 双路候选高度同源（实测 Jaccard 重合度 0.577），
-        该路单独 Recall@5 仅 0.833，低于 BM25 单路的 1.000，引入它反而稀释排序。
-        hash 模式下主要靠下游的 IDF 覆盖率重排 + MIN_COVER 门槛来纠正，见 _rescore。
+        向量已 L2 归一化，点积即余弦。阈值 0.05 只用于挡掉完全无关的块，
+        真正的截断靠 CANDIDATE_K；相关性把关在 _rescore 的 IDF 覆盖率 + MIN_COVER。
         """
         qv = self.embedder.embed([query])[0]
         mat = self.vecs[cand]
@@ -224,7 +204,7 @@ class ChunkStore:
             with open(config.CHUNKS_JSONL, "r", encoding="utf-8") as f:
                 self.records = [json.loads(line) for line in f if line.strip()]
             self.vecs = np.load(config.VECTORS_NPY)
-            # 条目数或向量维度对不上，说明索引来自另一个 EMBED_BACKEND（如 hash=384 vs bge=1024），
+            # 条目数或向量维度对不上，说明索引来自另一个 EMBED_BACKEND（如 openai=1536 vs bge=1024），
             # 或者 data 目录被外部删过一部分 —— 直接判为失效重建，否则后续 add/delete/检索都会炸。
             if (
                 self.vecs.ndim != 2

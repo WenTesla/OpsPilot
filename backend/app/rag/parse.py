@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -110,18 +110,12 @@ class Chunk:
     heading_path: str = ""
     locator: str = ""
     filename: str = ""
-    doc_type: str = "other"
-    service: list[str] = field(default_factory=list)
-    env: list[str] = field(default_factory=list)
 
 
 def chunk_blocks(
     blocks: list[Block],
     doc_id: str,
     filename: str,
-    doc_type: str,
-    service: list[str],
-    env: list[str],
     target: int,
     overlap: int,
 ) -> list[Chunk]:
@@ -139,18 +133,17 @@ def chunk_blocks(
             elif len(cur) + len(p) + 1 <= target:
                 cur += "\n" + p
             else:
-                chunks.append(_mk(b, cur, doc_id, filename, doc_type, service, env, idx))
+                chunks.append(_mk(b, cur, doc_id, filename, idx))
                 idx += 1
                 # 尾部保留一点重叠
                 cur = (cur[-overlap:] + "\n" + p) if overlap > 0 else p
         if cur:
-            chunks.append(_mk(b, cur, doc_id, filename, doc_type, service, env, idx))
+            chunks.append(_mk(b, cur, doc_id, filename, idx))
             idx += 1
     return [c for c in chunks if c.text.strip()]
 
 
-def _mk(b: Block, text: str, doc_id: str, filename: str, doc_type: str,
-        service: list[str], env: list[str], idx: int) -> Chunk:
+def _mk(b: Block, text: str, doc_id: str, filename: str, idx: int) -> Chunk:
     import hashlib
     cid = hashlib.md5(f"{doc_id}:{idx}:{text[:64]}".encode("utf-8")).hexdigest()[:16]
     # 把章节路径拼进 chunk 文本：标题往往是最强的检索信号（如"3. CPU 使用率过高"）
@@ -158,6 +151,5 @@ def _mk(b: Block, text: str, doc_id: str, filename: str, doc_type: str,
     return Chunk(
         chunk_id=cid, doc_id=doc_id, text=full,
         heading_path=b.heading_path, locator=b.locator,
-        filename=filename, doc_type=doc_type,
-        service=service, env=env,
+        filename=filename,
     )

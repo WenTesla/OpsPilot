@@ -44,7 +44,7 @@ MD = """# SOP-主机资源异常处理
 """
 
 print("health:", get("/api/health")[1])
-print("upload:", post("/api/documents", {"doc_type": "sop", "service": "order-service", "env": "prod"},
+print("upload:", post("/api/documents", {},
                       files=("SOP-主机资源异常处理.md", MD.encode("utf-8"))))
 print("list:", get("/api/documents")[1][:300])
 

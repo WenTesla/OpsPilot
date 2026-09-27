@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, TypedDict
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
@@ -25,27 +25,13 @@ class OpsPilotState(TypedDict):
 
 def build_rag_tool(pipeline: RAGPipeline):
     @tool
-    def search_ops_knowledge(
-        query: str,
-        service: str | None = None,
-        env: str | None = None,
-        doc_type: str | None = None,
-        top_k: int = 5,
-    ) -> str:
+    def search_ops_knowledge(query: str, top_k: int = 5) -> str:
         """检索运维知识库（用户上传的 SOP、手册、复盘报告等 PDF/MD 文档）。
 
         当需要故障处置步骤、历史相似案例、根因分析参考时调用。
         返回带来源引用 [编号] 的知识片段。
         """
-        filters: dict[str, Any] = {}
-        if service:
-            filters["service"] = [service]
-        if env:
-            filters["env"] = [env]
-        if doc_type:
-            filters["doc_type"] = doc_type
-
-        result = pipeline.retrieve(query, filters=filters, top_k=top_k)
+        result = pipeline.retrieve(query, top_k=top_k)
         context, citations = RAGPipeline.format_context(result)
         collect_citations(citations)
         return context
@@ -54,10 +40,16 @@ def build_rag_tool(pipeline: RAGPipeline):
 
 
 class OpsPilot:
-    def __init__(self, pipeline: RAGPipeline):
+    """RAG 工具 + 可选的 MCP 活数据工具。
+
+    `extra_tools` 为 None 时行为与 v0.1 完全一致；RAG 工具始终排在第一位，
+    既保证「先查规范」的默认倾向，也兼容 Mock 模型固定取 tools[0] 的行为。
+    """
+
+    def __init__(self, pipeline: RAGPipeline, extra_tools: list | None = None):
         self.pipeline = pipeline
         self.tool = build_rag_tool(pipeline)
-        self.tools = [self.tool]
+        self.tools = [self.tool] + list(extra_tools or [])
         self.model = get_chat_model().bind_tools(self.tools)
         self.graph = self._build()
 
@@ -86,7 +78,8 @@ class OpsPilot:
         return g.compile(checkpointer=MemorySaver())
 
     def thread_config(self, conversation_id: str) -> dict:
-        return {"configurable": {"thread_id": conversation_id}, "recursion_limit": 12}
+        # 活数据工具加入后一次排障常需 2~3 轮工具调用，原 12 的上限会被 GraphRecursionError 打断
+        return {"configurable": {"thread_id": conversation_id}, "recursion_limit": 24}
 
     async def stream(self, conversation_id: str, user_text: str):
         """产出 (mode, chunk) 流，供 SSE 消费。"""

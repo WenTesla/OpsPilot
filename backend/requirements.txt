@@ -12,3 +12,8 @@ python-dotenv>=1.0    # 加载 .env
 # 可选（配置后提升效果，不配也能跑）
 # langchain-openai>=0.2      # 接 OpenAI 兼容大模型
 sentence-transformers>=2.6 # BGE-M3 本地向量 / reranker
+
+# 可选：v0.2 MCP 活数据工具（指标 / 日志 / 告警）。不装则自动降级为纯知识库问答
+# 注意版本：langchain-mcp-adapters 0.3.x 依赖 mcp 1.x；而 fastmcp 新版依赖 mcp 2.x，
+# 两者同时装会冲突。本项目服务端直接用 mcp SDK 自带的 mcp.server.fastmcp，不装 fastmcp。
+langchain-mcp-adapters>=0.3.2

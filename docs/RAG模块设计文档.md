@@ -273,23 +273,14 @@ class OpsPilotState(TypedDict):
 from langchain_core.tools import tool
 
 @tool
-def search_ops_knowledge(
-    query: str,
-    service: str | None = None,
-    env: str | None = None,
-    doc_type: str | None = None,   # sop|postmortem|doc|other
-    top_k: int = 5,
-) -> str:
+def search_ops_knowledge(query: str, top_k: int = 5) -> str:
     """检索运维知识库（用户上传的 SOP、手册、复盘报告等 PDF/MD 文档）。
 
     当需要故障处置步骤、历史相似案例、根因分析参考时调用。
     返回带来源引用（文件名+页码/章节）的知识片段。
     """
-    result = rag_pipeline.retrieve(
-        query=query,
-        filters={"service": service, "env": env, "doc_type": doc_type},
-        top_k=top_k,
-    )
+    # 不做元数据过滤：LLM 推断的 service/env 实体不可靠，硬过滤会直接把候选清空导致零召回
+    result = rag_pipeline.retrieve(query=query, top_k=top_k)
     if not result.hits:
         return "知识库中未找到高置信相关内容。建议：转人工或基于告警指标进一步排查。"
     return rag_pipeline.format_context(result)   # 含 [n] 引用与来源定位
@@ -391,12 +382,12 @@ Demo 版前端内置 Mock 模式（无后端时可独立运行演示），通过
 
 ```
 POST /api/documents
-  multipart/form-data: file(.pdf|.md), doc_type, service[], env[], title?
+  multipart/form-data: file(.pdf|.md)
   → 202 {"doc_id": "...", "task_id": "...", "status": "processing"}
 
 GET /api/documents
-  → 200 {"items": [{"doc_id", "filename", "format", "doc_type", "status",
-                     "chunk_count", "uploaded_by", "updated_at"}]}
+  → 200 {"items": [{"doc_id", "filename", "format", "status",
+                     "chunk_count", "updated_at"}]}
 
 GET /api/documents/{doc_id}
   → 200 文档详情（含解析状态、失败原因）
